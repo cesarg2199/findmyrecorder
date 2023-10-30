@@ -11,6 +11,10 @@ def main():
     load_dotenv()
 
     username = os.getenv("USERNAME")
+    host = os.getenv("DB_HOST")
+    user = os.getenv("DB_USERNAME")
+    password = os.getenv("DB_PASSWORD")
+    database = os.getenv("DB_DATABASE")
 
     try:
         api = PyiCloudService(username)
@@ -20,11 +24,10 @@ def main():
     except PyiCloudNoStoredPasswordAvailableException:
         print("Failed to log in to iCloud. Check your username.")
         return
-    
-    host = os.getenv("DB_HOST")
-    user = os.getenv("DB_USERNAME")
-    password = os.getenv("DB_PASSWORD")
-    database = os.getenv("DB_DATABASE")
+
+    iphone = getiPhoneFromDevices(api.devices)
+    iphone_location = iphone.location()
+    iphone_status = iphone.status(['deviceStatus', 'batteryLevel', 'batteryStatus', 'lowPowerMode'])
 
     try:
         # Establish a connection to the MySQL server
@@ -35,44 +38,51 @@ def main():
             database=database
         )
 
-        iphone = getiPhoneFromDevices(api.devices)
-
-        #check to see if device id has already been saved, if not add it to table
-        device_id_hashed = hashString(iphone['id'])
-
-        #Calling this also refreshs the client which is what Im going for 
-        iphone_location = iphone.location()
-
-        #Location Info
-        location_insert_query = '''
-                                    INSERT INTO `findmyrecorder`.`locations` (`device_id`,  `latitude`,  `longitude`, `altitude`, `timestamp`, `is_old`, `is_inaccurate`, `vertical_accuracy`, `horizontal_accuracy`, `created_at`) 
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                                '''
-
-        #Status Info
-        status_insert_query = '''
-                                INSERT INTO `findmyrecorder`.`statuses`
-                                (`device_id`,
-                                `status`,
-                                `battery_level`,
-                                `battery_status`,
-                                `low_power_enabled`,
-                                `created_at`)
-                                VALUES (%s, %s, %s, %s, %s, %s);
-                              '''
-
         if connection.is_connected():
             # Create a cursor object to interact with the database
             cursor = connection.cursor()
 
+            #check to see if device id has already been saved, if not add it to table
+            device_id_hashed = hashString(iphone['id'])
+
             cursor.execute("SELECT * FROM devices WHERE device_id_hashed = %s", [device_id_hashed])
 
             row = cursor.fetchone()
-            device_model = mapDevice(row)
+
+            if row == None:
+                device_params = [
+                    iphone['id'],
+                    device_id_hashed,
+                    iphone['name'],
+                    iphone['deviceDisplayName'],
+                    iphone['deviceClass'],
+                    createdAtStamp()
+                ]
+
+                cursor.execute('''
+                                    INSERT INTO `findmyrecorder`.`devices`
+                                    (`device_id`,
+                                    `device_id_hashed`,
+                                    `name`,
+                                    `display_name`,
+                                    `type`,
+                                    `created_at`)
+                                    VALUES (%s, %s, %s, %s, %s, %s);
+                                ''', device_params)
+                connection.commit()
+
+                cursor.execute(
+                    "SELECT * FROM devices WHERE device_id_hashed = %s", [device_id_hashed])
+
+                row = cursor.fetchone()
+                
+                device_model = DeviceModel(row[0], device_params[0], device_params[1], device_params[2], device_params[3], device_params[4], device_params[5])
+            else:
+                device_model = DeviceModel(row[0], row[1], row[2], row[3], row[4], row[5], row[6])
 
             #save device location to db
             location_params = [
-                device_model['id'],
+                device_model.id,
                 iphone_location['latitude'],
                 iphone_location['longitude'],
                 iphone_location['altitude'],
@@ -84,13 +94,23 @@ def main():
                 createdAtStamp()
             ]
 
-            cursor.execute(location_insert_query, location_params)
-
-            #save device status to db
-            iphone_status = iphone.status(['deviceStatus', 'batteryLevel', 'batteryStatus', 'lowPowerMode'])
+            cursor.execute('''
+                                INSERT INTO `findmyrecorder`.`locations`
+                                (`device_id`,
+                                `latitude`,
+                                `longitude`,
+                                `altitude`,
+                                `timestamp`,
+                                `is_old`, 
+                                `is_inaccurate`, 
+                                `vertical_accuracy`, 
+                                `horizontal_accuracy`, 
+                                `created_at`) 
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                            ''', location_params)
 
             status_params = [
-                device_model['id'],
+                device_model.id,
                 iphone_status['deviceStatus'],
                 iphone_status['batteryLevel'],
                 iphone_status['batteryStatus'],
@@ -98,7 +118,16 @@ def main():
                 createdAtStamp()
             ]
 
-            cursor.execute(status_insert_query, status_params)
+            cursor.execute('''
+                                INSERT INTO `findmyrecorder`.`statuses`
+                                (`device_id`,
+                                `status`,
+                                `battery_level`,
+                                `battery_status`,
+                                `low_power_enabled`,
+                                `created_at`)
+                                VALUES (%s, %s, %s, %s, %s, %s);
+                            ''', status_params)
 
             connection.commit()
 
@@ -130,27 +159,32 @@ def createdAtStamp():
     return utc_time
 
 def hashString(input_string):
-    # Create a hash object
     sha256_hash = hashlib.sha256()
-
-    # Update the hash object with the input string encoded as bytes
     sha256_hash.update(input_string.encode())
-
-    # Get the hexadecimal representation of the hash
     hashed_string = sha256_hash.hexdigest()
-
     return hashed_string
 
-def mapDevice(device_row):
-    return {
-        "id": device_row[0],
-        "device_id": device_row[1],
-        "device_id_hashed": device_row[2],
-        "name": device_row[3],
-        "display_name": device_row[4],
-        "type": device_row[5],
-        "created_at": device_row[6].strftime('%Y-%m-%d %H:%M:%S')
-    }
+
+class DeviceModel:
+    def __init__(
+        self,
+        id,
+        device_id,
+        device_id_hashed,
+        name,
+        display_name,
+        type,
+        created_at
+    ):
+        self.id = id
+        self.device_id = device_id
+        self.device_id_hashed = device_id_hashed
+        self.name = name
+        self.display_name = display_name
+        self.type = type
+        self.created_at = created_at.strftime('%Y-%m-%d %H:%M:%S')
+
+
 
 if __name__ == "__main__":
     main()

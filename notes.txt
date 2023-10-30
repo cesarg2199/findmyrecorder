@@ -9,6 +9,8 @@ finsih setting up db tables
 finsih writign and testing script
 setup scipt on linux computer
 setup cronjob to run scipt every hour 
+
+
 update readme 
     how to install 
     how to run it
