@@ -1,6 +1,5 @@
 from pyicloud import PyiCloudService
 from pyicloud.exceptions import PyiCloudFailedLoginException, PyiCloudNoStoredPasswordAvailableException
-import json
 import os
 from dotenv import load_dotenv
 import mysql.connector
@@ -30,7 +29,6 @@ def main():
     iphone_status = iphone.status(['deviceStatus', 'batteryLevel', 'batteryStatus', 'lowPowerMode'])
 
     try:
-        # Establish a connection to the MySQL server
         connection = mysql.connector.connect(
             host=host,
             user=user,
@@ -39,7 +37,6 @@ def main():
         )
 
         if connection.is_connected():
-            # Create a cursor object to interact with the database
             cursor = connection.cursor()
 
             #check to see if device id has already been saved, if not add it to table
@@ -80,7 +77,6 @@ def main():
             else:
                 device_model = DeviceModel(row[0], row[1], row[2], row[3], row[4], row[5], row[6])
 
-            #save device location to db
             location_params = [
                 device_model.id,
                 iphone_location['latitude'],
@@ -144,9 +140,6 @@ def main():
 '''
 Utils
 '''
-def jsonPrint(message):
-    print(json.dumps(message, indent=4, ensure_ascii=False))
-
 def getiPhoneFromDevices(devices):
     for device in devices:
         if device['deviceClass'] == 'iPhone':
